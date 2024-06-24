@@ -14,6 +14,7 @@ class Program
         if (!File.Exists("RomDownloader.json"))
         {
             romSources.Add(new ROMSource() { Type = "MAME", URI = "https://archive.org/download/mame-merged/mame-merged/" });
+            romSources.Add(new ROMSource() { Type = "GameCube", URI = "https://archive.org/download/rvz-gc-europe-redump/RVZ-GC-EUROPE-REDUMP/" });
             File.WriteAllText("RomDownloader.json", JsonConvert.SerializeObject(romSources));
         } else
         {
