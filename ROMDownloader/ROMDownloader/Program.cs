@@ -1,54 +1,67 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Net.Http;
-using HtmlAgilityPack;
+﻿using HtmlAgilityPack;
 
 class Program
 {
     private static async Task Main(string[] args)
     {
         string url = "https://archive.org/download/mame-merged/mame-merged/";
-        List<string> enlaces = await GetLinksAsync(url);
+        List<string> links = await GetLinksAsync(url);
 
-        foreach (string enlace in enlaces)
+        foreach (string romLink in links)
         {
-            using (HttpClient client = new HttpClient())
+            using (HttpClient client = new())
             {
-                try
+                client.Timeout = TimeSpan.FromSeconds(60);
+                string PathOutputRoms = Path.Combine("Roms");
+                Directory.CreateDirectory(PathOutputRoms);
+                ushort tries = 0;
+                bool downloaded = false;
+                do
                 {
-                    byte[] filecontents = await client.GetByteArrayAsync(enlace);
-                    string fileName = Path.GetFileName(enlace);
-                    await File.WriteAllBytesAsync(fileName, filecontents);
-                    Console.WriteLine($"Archivo descargado: {fileName}");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error al descargar el archivo({enlace}) : {ex.Message}");
-                }
+                    string romFileName = Path.GetFileName(romLink);
+                    string fileName = Path.Combine(PathOutputRoms, romFileName);
+                    if (tries > 0)
+                    {
+                        Console.WriteLine($"Trying downloading again: {romLink}");
+                    } else
+                    {
+                        Console.WriteLine($"Downloading ROM: {fileName}");
+                    }
+                    try
+                    {
+                        if (!File.Exists(Path.Combine(PathOutputRoms, romFileName)))
+                        {
+                            byte[] fileContent = await client.GetByteArrayAsync(romLink);
+                            await File.WriteAllBytesAsync(fileName, fileContent);
+                            downloaded = true;
+                            Console.WriteLine($"Downloaded ROM: {fileName}");
+                        } else
+                        {
+                            downloaded = true;
+                            Console.WriteLine($"Skipping: {fileName}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error downloading ROM from: {romLink} [{ex.Message}]");
+                    }
+                } while (!downloaded && tries < 3);
             }
         }
     }
 
     public static async Task<List<string>> GetLinksAsync(string url)
     {
-        List<string> enlaces = new List<string>();
-
-        // Crea una instancia de HttpClient para realizar la solicitud HTTP
+        List<string> linkList = new List<string>();
         using (HttpClient client = new HttpClient())
         {
             try
             {
-                // Realiza la solicitud HTTP y obtiene el contenido de la página
                 string contenidoHtml = await client.GetStringAsync(url);
-
-                // Crea una instancia de HtmlDocument y carga el contenido HTML
                 HtmlDocument documento = new HtmlDocument();
                 documento.LoadHtml(contenidoHtml);
-
-                // Selecciona todos los nodos <a> que contienen el atributo href
                 foreach (HtmlNode nodo in documento.DocumentNode.SelectNodes("//a[@href]"))
                 {
-                    // Obtiene el valor del atributo href
                     string href = nodo.GetAttributeValue("href", string.Empty);
                     if (href.EndsWith(".zip"))
                     {
@@ -56,16 +69,16 @@ class Program
                         {
                             href = url + href;
                         }
-                        enlaces.Add(href);
+                        linkList.Add(href);
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error al obtener los enlaces: {ex.Message}");
+                Console.WriteLine($"Error scrapping links: {ex.Message}");
             }
         }
 
-        return enlaces;
+        return linkList;
     }
 }
