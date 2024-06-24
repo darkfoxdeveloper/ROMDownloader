@@ -1,42 +1,61 @@
 ﻿using HtmlAgilityPack;
+using Newtonsoft.Json;
+using ROMDownloader;
 using ShellProgressBar;
 
 class Program
 {
-    private static ProgressBar progressBar;
+    private static ProgressBar? progressBar;
     private static int NDownloaded = 0;
     private static int TotalForDownload = 0;
     private static async Task Main(string[] args)
     {
-        string url = "https://archive.org/download/mame-merged/mame-merged/";
-        List<string> links = await GetLinksAsync(url);
-        Console.WriteLine("Starting download process...");
-
-        const int totalTicks = 10;
-        var options = new ProgressBarOptions
+        List<ROMSource> romSources = new();
+        if (!File.Exists("RomDownloader.json"))
         {
-            ProgressCharacter = '─',
-            ProgressBarOnBottom = true
-        };
-        progressBar = new ProgressBar(totalTicks, "Downloading...", options);
-
-        List<Task> tasks = new List<Task>();
-        TotalForDownload = links.Count();
-        foreach (string romLink in links)
+            romSources.Add(new ROMSource() { Type = "MAME", URI = "https://archive.org/download/mame-merged/mame-merged/" });
+            File.WriteAllText("RomDownloader.json", JsonConvert.SerializeObject(romSources));
+        } else
         {
-            tasks.Add(DownloadROM(romLink));
+            string contentJson = File.ReadAllText("RomDownloader.json");
+            if (contentJson.Length > 0)
+            {
+                romSources = JsonConvert.DeserializeObject<List<ROMSource>>(contentJson);
+            }
         }
-        Task.WaitAll(tasks.ToArray());
+
+        foreach(ROMSource romSource in romSources)
+        {
+            List<string> links = await GetLinksAsync(romSource);
+            Console.WriteLine($"Starting download process... [{romSource.Type} Roms]");
+
+            const int totalTicks = 10;
+            var options = new ProgressBarOptions
+            {
+                ProgressCharacter = '─',
+                ProgressBarOnBottom = true
+            };
+            progressBar = new ProgressBar(totalTicks, "Downloading...", options);
+
+            List<Task> tasks = [];
+            TotalForDownload = links.Count();
+            foreach (string romLink in links)
+            {
+                tasks.Add(DownloadROM(romSource, romLink));
+            }
+            Task.WaitAll(tasks.ToArray());
+            progressBar.Tick($"Download Completed.");
+        }
     }
 
-    public static async Task<List<string>> GetLinksAsync(string url)
+    public static async Task<List<string>> GetLinksAsync(ROMSource romSource)
     {
         List<string> linkList = new List<string>();
         using (HttpClient client = new HttpClient())
         {
             try
             {
-                string contenidoHtml = await client.GetStringAsync(url);
+                string contenidoHtml = await client.GetStringAsync(romSource.URI);
                 HtmlDocument documento = new HtmlDocument();
                 documento.LoadHtml(contenidoHtml);
                 foreach (HtmlNode nodo in documento.DocumentNode.SelectNodes("//a[@href]"))
@@ -46,7 +65,7 @@ class Program
                     {
                         if (!href.StartsWith("http://") && !href.StartsWith("https://"))
                         {
-                            href = url + href;
+                            href = romSource.URI + href;
                         }
                         linkList.Add(href);
                     }
@@ -60,12 +79,13 @@ class Program
 
         return linkList;
     }
-    public static async Task DownloadROM(string romLink)
+    public static async Task DownloadROM(ROMSource romSource, string romLink)
     {
+        if (progressBar == null) return;
         using (HttpClient client = new())
         {
             client.Timeout = TimeSpan.FromSeconds(60);
-            string PathOutputRoms = Path.Combine("Roms");
+            string PathOutputRoms = Path.Combine("Roms", romSource.Type);
             Directory.CreateDirectory(PathOutputRoms);
             ushort tries = 0;
             bool downloaded = false;
@@ -75,12 +95,7 @@ class Program
                 string fileName = Path.Combine(PathOutputRoms, romFileName);
                 if (tries > 0)
                 {
-                    //Console.WriteLine($"Trying downloading again: {romLink}");
                     client.Timeout *= 2;
-                }
-                else
-                {
-                    //Console.WriteLine($"Downloading ROM: {fileName}");
                 }
                 try
                 {
@@ -89,7 +104,6 @@ class Program
                         byte[] fileContent = await client.GetByteArrayAsync(romLink);
                         await File.WriteAllBytesAsync(fileName, fileContent);
                         downloaded = true;
-                        //Console.WriteLine($"Downloaded ROM: {fileName}");
                         NDownloaded++;
                         progressBar.Tick($"Downloaded {NDownloaded} of {TotalForDownload}");
                     }
@@ -97,7 +111,7 @@ class Program
                     {
                         downloaded = true;
                         NDownloaded++;
-                        //Console.WriteLine($"Skipping: {fileName}");
+                        progressBar.Tick($"Downloaded {NDownloaded} of {TotalForDownload}");
                     }
                 }
                 catch (Exception ex)
