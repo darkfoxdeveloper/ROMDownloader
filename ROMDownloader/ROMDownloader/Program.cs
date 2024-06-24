@@ -13,8 +13,8 @@ class Program
         List<ROMSource> romSources = new();
         if (!File.Exists("RomDownloader.json"))
         {
-            romSources.Add(new ROMSource() { Type = "MAME", URI = "https://archive.org/download/mame-merged/mame-merged/" });
-            romSources.Add(new ROMSource() { Type = "GameCube", URI = "https://archive.org/download/rvz-gc-europe-redump/RVZ-GC-EUROPE-REDUMP/" });
+            romSources.Add(new ROMSource() { Type = "MAME", URI = "https://archive.org/download/mame-merged/mame-merged/", Extension = "zip" });
+            romSources.Add(new ROMSource() { Type = "GameCube", URI = "https://archive.org/download/rvz-gc-europe-redump/RVZ-GC-EUROPE-REDUMP/", Extension = "rvz" });
             File.WriteAllText("RomDownloader.json", JsonConvert.SerializeObject(romSources));
         } else
         {
@@ -28,7 +28,7 @@ class Program
         foreach(ROMSource romSource in romSources)
         {
             List<string> links = await GetLinksAsync(romSource);
-            Console.WriteLine($"Starting download process... [{romSource.Type} Roms]");
+            Console.WriteLine($"[{romSource.Type}] Download starting...");
 
             const int totalTicks = 10;
             var options = new ProgressBarOptions
@@ -45,7 +45,7 @@ class Program
                 tasks.Add(DownloadROM(romSource, romLink));
             }
             Task.WaitAll(tasks.ToArray());
-            progressBar.Tick($"Download Completed.");
+            progressBar.Tick($"[{romSource.Type}] Download Completed.");
         }
     }
 
@@ -57,12 +57,12 @@ class Program
             try
             {
                 string contenidoHtml = await client.GetStringAsync(romSource.URI);
-                HtmlDocument documento = new HtmlDocument();
+                HtmlDocument documento = new();
                 documento.LoadHtml(contenidoHtml);
                 foreach (HtmlNode nodo in documento.DocumentNode.SelectNodes("//a[@href]"))
                 {
                     string href = nodo.GetAttributeValue("href", string.Empty);
-                    if (href.EndsWith(".zip"))
+                    if (href.EndsWith("." + romSource.Extension))
                     {
                         if (!href.StartsWith("http://") && !href.StartsWith("https://"))
                         {
