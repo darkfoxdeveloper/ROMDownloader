@@ -2,6 +2,7 @@
 using Newtonsoft.Json;
 using ROMDownloader;
 using ShellProgressBar;
+using System;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
@@ -17,7 +18,6 @@ class Program
     private static RomDownloaderConfig config = new() { ROMSources = new(), MaxParallelDownloads = 3 };
     private static int _MaxDegreeOfParallelism = 1;
     private static SemaphoreSlim _SemaphoreDownloads;
-    private static int _ActiveTasks = 0;
     private static double _LastDownloadSpeed = 0;
     private static ProgressBarOptions _ChildProgressBarOptions;
     private static async Task Main(string[] args)
@@ -97,13 +97,12 @@ class Program
                     {
                         try
                         {
-                            _ActiveTasks++;
                             await DownloadROM(romSource, romLink);
                         }
                         finally
                         {
-                            _ActiveTasks--;
                             _SemaphoreDownloads.Release();
+                            _progressBar?.AsProgress<float>().Report((float)_NDownloaded / _TotalForDownload);
                         }
                     }));
                 }
