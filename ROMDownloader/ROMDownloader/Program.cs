@@ -5,6 +5,7 @@ using ShellProgressBar;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Reflection;
 
 class Program
 {
@@ -22,6 +23,9 @@ class Program
             ProgressBarOnBottom = true,
             ShowEstimatedDuration = true,
         };
+        string vName = Assembly.GetExecutingAssembly().GetName().Version.ToString();
+        Console.Title = $"RomDownloader v{vName}";
+        Console.WriteLine($"ROMDownloader v{vName} starting...");
         if (!File.Exists("RomDownloader.json"))
         {
             config.ROMSources.Add(new ROMSource() { Type = "MAME", URI = "https://archive.org/download/mame-merged/mame-merged/", Extension = "zip" });
