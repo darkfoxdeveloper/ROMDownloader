@@ -2,7 +2,9 @@
 using Newtonsoft.Json;
 using ROMDownloader;
 using ShellProgressBar;
+using System;
 using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Reflection;
@@ -23,6 +25,7 @@ class Program
             ProgressCharacter = '─',
             ProgressBarOnBottom = true,
             ShowEstimatedDuration = true,
+            DisableBottomPercentage = true,
         };
         string vName = Assembly.GetExecutingAssembly().GetName().Version.ToString();
         Console.Title = $"RomDownloader v{vName}";
@@ -68,7 +71,8 @@ class Program
                 List<string> links = await GetLinksAsync(romSource);
                 _progressBar.WriteLine($"[{romSource.Type}] Download starting...");
 
-                List<Task> tasks = [];
+                // TODO download progressive 5 in 5 or similar system
+                //List<Task> tasks = [];
                 _TotalForDownload = links.Count();
                 foreach (string romLink in links)
                 {
@@ -142,14 +146,20 @@ class Program
 
         return linkList;
     }
-    public static async Task DownloadROM(ROMSource romSource, string romLink)
+    private static async Task DownloadROM(ROMSource romSource, string romLink)
     {
         if (_progressBar == null) return;
+        await DownloadWithProgressBar(romSource, romLink);
+    }
+
+    private static async Task DownloadWithProgressBar(ROMSource romSource, string romLink)
+    {
         if (_CookieContainer == null) _CookieContainer = new CookieContainer();
         var handlerHttp = new HttpClientHandler
         {
             CookieContainer = _CookieContainer
         };
+        var request = new HttpRequestMessage(HttpMethod.Get, romLink);
         using (HttpClient client = new(handlerHttp))
         {
             client.Timeout = TimeSpan.FromSeconds(600);
@@ -157,31 +167,66 @@ class Program
             Directory.CreateDirectory(PathOutputRoms);
             ushort tries = 0;
             bool downloaded = false;
+            double lastDownloadSpeed = 0;
             do
             {
-                _progressBar.Tick($"Downloaded {_NDownloaded} of {_TotalForDownload} [tries:{tries}]"); // Initial refresh state
                 string romFileName = Path.GetFileName(romLink);
-                string fileName = Path.Combine(PathOutputRoms, romFileName);
-                if (tries > 0)
-                {
-                    client.Timeout *= 2;
-                }
+                string fileNameRomOutput = HttpUtility.UrlDecode(romFileName, System.Text.Encoding.UTF8);
+                string fileNameRomOutputFixed = Path.Combine(PathOutputRoms, fileNameRomOutput);
                 try
                 {
-                    if (!File.Exists(Path.Combine(PathOutputRoms, HttpUtility.UrlDecode(romFileName, System.Text.Encoding.UTF8))))
+                    if (!File.Exists(Path.Combine(PathOutputRoms, fileNameRomOutput)))
                     {
+                        _progressBar.Tick($"Downloading {fileNameRomOutputFixed}..."); // Initial refresh state
+                        //byte[] fileContent = await client.GetByteArrayAsync(romLink);
                         var stopwatch = Stopwatch.StartNew();
-                        byte[] fileContent = await client.GetByteArrayAsync(romLink);
+                        long romLength = 0;
+                        using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
+                        {
+                            response.EnsureSuccessStatusCode();
+
+                            var contentLength = response.Content.Headers.ContentLength;
+                            if (contentLength != null)
+                            {
+                                romLength = (long)contentLength;
+                            }
+                            if (contentLength.HasValue)
+                            {
+                                using (var contentStream = await response.Content.ReadAsStreamAsync())
+                                {
+                                    using (var fileStream = new FileStream(fileNameRomOutputFixed, FileMode.Create, FileAccess.Write, FileShare.None, 8192, useAsync: true))
+                                    {
+                                        var totalRead = 0L;
+                                        var buffer = new byte[8192];
+                                        int bytesRead;
+
+                                        while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                                        {
+                                            await fileStream.WriteAsync(buffer, 0, bytesRead);
+                                            totalRead += bytesRead;
+                                            var progress = (double)totalRead / contentLength.Value * 100;
+                                            _progressBar.Tick($"Downloading: {Path.GetFileName(fileNameRomOutputFixed)} [{progress:0.00}%] {(lastDownloadSpeed > 0 ? $"[{lastDownloadSpeed} MB/s]" : "")}"); // refresh state
+
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("No se pudo obtener el tamaño del contenido.");
+                            }
+                        }
                         stopwatch.Stop();
-                        var fileSizeInBytes = fileContent.Length;
+                        var fileSizeInBytes = romLength;//fileContent.Length;
                         var timeInSeconds = stopwatch.Elapsed.TotalSeconds;
                         var speedInBytesPerSecond = fileSizeInBytes / timeInSeconds;
                         var speedInMegabytesPerSecond = speedInBytesPerSecond / (1024.0 * 1024.0);
-                        await File.WriteAllBytesAsync(fileName, fileContent);
+                        //await File.WriteAllBytesAsync(fileNameRomOutputFixed, fileContent);
                         downloaded = true;
                         _NDownloaded++;
                         tries = 0;
-                        _progressBar.Tick($"Downloaded {_NDownloaded} of {_TotalForDownload} [tries:{tries}] [{speedInMegabytesPerSecond} MB/s] [LastActionMessage: SUCCESS]");
+                        lastDownloadSpeed = speedInMegabytesPerSecond;
+                        _progressBar.Tick($"Downloaded {_NDownloaded} of {_TotalForDownload} [tries:{tries}] [{lastDownloadSpeed} MB/s] [LastActionMessage: SUCCESS]");
                     }
                     else
                     {
