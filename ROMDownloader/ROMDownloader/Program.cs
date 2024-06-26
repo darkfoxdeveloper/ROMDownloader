@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Web;
 
 class Program
 {
@@ -28,7 +29,7 @@ class Program
         Console.WriteLine($"ROMDownloader v{vName} starting...");
         if (!File.Exists("RomDownloader.json"))
         {
-            config.ROMSources.Add(new ROMSource() { Type = "MAME", URI = "https://archive.org/download/mame-merged/mame-merged/", Extension = "zip" });
+            //config.ROMSources.Add(new ROMSource() { Type = "MAME", URI = "https://archive.org/download/mame-merged/mame-merged/", Extension = "zip" });
             config.ROMSources.Add(new ROMSource() { Type = "GameCube", URI = "https://archive.org/download/rvz-gc-europe-redump/RVZ-GC-EUROPE-REDUMP/", Extension = "rvz" });
             Console.WriteLine("Do you want a authentificated downloads for archive.org: [Y/N]");
             string? ConsoleDownloads = Console.ReadLine();
@@ -71,9 +72,10 @@ class Program
                 _TotalForDownload = links.Count();
                 foreach (string romLink in links)
                 {
-                    tasks.Add(DownloadROM(romSource, romLink));
+                    await DownloadROM(romSource, romLink);
+                    //tasks.Add(DownloadROM(romSource, romLink));
                 }
-                Task.WaitAll(tasks.ToArray());
+                //Task.WaitAll(tasks.ToArray());
                 _progressBar.Tick($"[{romSource.Type}] Download Completed.");
             }
         }
@@ -166,7 +168,7 @@ class Program
                 }
                 try
                 {
-                    if (!File.Exists(Path.Combine(PathOutputRoms, romFileName)))
+                    if (!File.Exists(Path.Combine(PathOutputRoms, HttpUtility.UrlDecode(romFileName, System.Text.Encoding.UTF8))))
                     {
                         var stopwatch = Stopwatch.StartNew();
                         byte[] fileContent = await client.GetByteArrayAsync(romLink);
