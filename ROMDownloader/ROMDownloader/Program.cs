@@ -2,9 +2,7 @@
 using Newtonsoft.Json;
 using ROMDownloader;
 using ShellProgressBar;
-using System;
 using System.Diagnostics;
-using System.IO;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Reflection;
@@ -16,7 +14,10 @@ class Program
     private static int _NDownloaded = 0;
     private static int _TotalForDownload = 0;
     private static CookieContainer? _CookieContainer;
-    private static RomDownloaderConfig config = new() { ROMSources = new() };
+    private static RomDownloaderConfig config = new() { ROMSources = new(), MaxParallelDownloads = 1 };
+    private static int _MaxDegreeOfParallelism = 1;
+    private static SemaphoreSlim _SemaphoreDownloads;
+    private static int _ActiveTasks = 0;
     private static async Task Main(string[] args)
     {
         const int totalTicks = 10;
@@ -25,7 +26,7 @@ class Program
             ProgressCharacter = '─',
             ProgressBarOnBottom = true,
             ShowEstimatedDuration = true,
-            DisableBottomPercentage = true,
+            DisableBottomPercentage = false,
         };
         string vName = Assembly.GetExecutingAssembly().GetName().Version.ToString();
         Console.Title = $"RomDownloader v{vName}";
@@ -57,6 +58,10 @@ class Program
                 config = JsonConvert.DeserializeObject<RomDownloaderConfig>(contentJson);
             }
         }
+        if (config.MaxParallelDownloads > 0)
+        {
+            _MaxDegreeOfParallelism = (int)config?.MaxParallelDownloads;
+        }
         _progressBar = new ProgressBar(totalTicks, "Starting ROMDownloader...", options);
         if (config?.ArchiveUsername != null && config?.ArchivePassword != null)
         {
@@ -71,15 +76,27 @@ class Program
                 List<string> links = await GetLinksAsync(romSource);
                 _progressBar.WriteLine($"[{romSource.Type}] Download starting...");
 
-                // TODO download progressive 5 in 5 or similar system
-                //List<Task> tasks = [];
+                List<Task> tasks = [];
+                _SemaphoreDownloads = new SemaphoreSlim(_MaxDegreeOfParallelism);
                 _TotalForDownload = links.Count();
                 foreach (string romLink in links)
                 {
-                    await DownloadROM(romSource, romLink);
-                    //tasks.Add(DownloadROM(romSource, romLink));
+                    await _SemaphoreDownloads.WaitAsync();
+                    tasks.Add(Task.Run(async () =>
+                    {
+                        try
+                        {
+                            _ActiveTasks++;
+                            await DownloadROM(romSource, romLink);
+                        }
+                        finally
+                        {
+                            _ActiveTasks--;
+                            _SemaphoreDownloads.Release();
+                        }
+                    }));
                 }
-                //Task.WaitAll(tasks.ToArray());
+                await Task.WhenAll(tasks);
                 _progressBar.Tick($"[{romSource.Type}] Download Completed.");
             }
         }
@@ -177,8 +194,7 @@ class Program
                 {
                     if (!File.Exists(Path.Combine(PathOutputRoms, fileNameRomOutput)))
                     {
-                        _progressBar.Tick($"Downloading {fileNameRomOutputFixed}..."); // Initial refresh state
-                        //byte[] fileContent = await client.GetByteArrayAsync(romLink);
+                        _progressBar?.Tick($"Downloading {fileNameRomOutputFixed}..."); // Initial refresh state
                         var stopwatch = Stopwatch.StartNew();
                         long romLength = 0;
                         using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
@@ -192,23 +208,25 @@ class Program
                             }
                             if (contentLength.HasValue)
                             {
-                                using (var contentStream = await response.Content.ReadAsStreamAsync())
+                                using var contentStream = await response.Content.ReadAsStreamAsync();
+                                using var fileStream = new FileStream(fileNameRomOutputFixed, FileMode.Create, FileAccess.Write, FileShare.None, 8192, useAsync: true);
+                                var totalRead = 0L;
+                                var buffer = new byte[8192];
+                                int bytesRead;
+
+                                while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
                                 {
-                                    using (var fileStream = new FileStream(fileNameRomOutputFixed, FileMode.Create, FileAccess.Write, FileShare.None, 8192, useAsync: true))
+                                    await fileStream.WriteAsync(buffer, 0, bytesRead);
+                                    totalRead += bytesRead;
+                                    var progress = (double)totalRead / contentLength.Value * 100;
+                                    if (_MaxDegreeOfParallelism > 1)
                                     {
-                                        var totalRead = 0L;
-                                        var buffer = new byte[8192];
-                                        int bytesRead;
-
-                                        while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                                        {
-                                            await fileStream.WriteAsync(buffer, 0, bytesRead);
-                                            totalRead += bytesRead;
-                                            var progress = (double)totalRead / contentLength.Value * 100;
-                                            _progressBar.Tick($"Downloading: {Path.GetFileName(fileNameRomOutputFixed)} [{progress:0.00}%] {(lastDownloadSpeed > 0 ? $"[{lastDownloadSpeed} MB/s]" : "")}"); // refresh state
-
-                                        }
+                                        _progressBar?.Tick($"Downloading {_ActiveTasks} ROMS"); // refresh state
+                                    } else
+                                    {
+                                        _progressBar?.Tick($"Downloading: {Path.GetFileName(fileNameRomOutputFixed)} [{progress:0.00}%] {(lastDownloadSpeed > 0 ? $"[{lastDownloadSpeed} MB/s]" : "")}"); // refresh state
                                     }
+
                                 }
                             }
                             else
@@ -216,31 +234,29 @@ class Program
                                 Console.WriteLine("No se pudo obtener el tamaño del contenido.");
                             }
                         }
-                        stopwatch.Stop();
-                        var fileSizeInBytes = romLength;//fileContent.Length;
+                        var fileSizeInBytes = romLength;
                         var timeInSeconds = stopwatch.Elapsed.TotalSeconds;
                         var speedInBytesPerSecond = fileSizeInBytes / timeInSeconds;
                         var speedInMegabytesPerSecond = speedInBytesPerSecond / (1024.0 * 1024.0);
-                        //await File.WriteAllBytesAsync(fileNameRomOutputFixed, fileContent);
+                        stopwatch.Stop();
                         downloaded = true;
                         _NDownloaded++;
                         tries = 0;
                         lastDownloadSpeed = speedInMegabytesPerSecond;
-                        _progressBar.Tick($"Downloaded {_NDownloaded} of {_TotalForDownload} [tries:{tries}] [{lastDownloadSpeed} MB/s] [LastActionMessage: SUCCESS]");
+                        _progressBar?.Tick($"Downloaded {_NDownloaded} of {_TotalForDownload} [tries:{tries}] [{lastDownloadSpeed} MB/s] [LastActionMessage: SUCCESS]");
                     }
                     else
                     {
                         downloaded = true;
                         tries = 0;
                         _NDownloaded++;
-                        _progressBar.Tick($"Downloaded {_NDownloaded} of {_TotalForDownload} [tries:{tries}] [LastActionMessage: Failed Download]");
+                        _progressBar?.Tick($"Downloaded {_NDownloaded} of {_TotalForDownload} [tries:{tries}] [LastActionMessage: Failed Download]");
                     }
                 }
                 catch (Exception ex)
                 {
                     tries++;
-                    _progressBar.Tick($"Downloaded {_NDownloaded} of {_TotalForDownload} [tries:{tries}] [LastActionMessage: {ex.Message}]");
-                    //_progressBar.WriteErrorLine($"Error downloading ROM from: {romLink} [{ex.Message}]");
+                    _progressBar?.Tick($"Downloaded {_NDownloaded} of {_TotalForDownload} [tries:{tries}] [LastActionMessage: {ex.Message}]");
                 }
             } while (!downloaded && tries < 3);
         }

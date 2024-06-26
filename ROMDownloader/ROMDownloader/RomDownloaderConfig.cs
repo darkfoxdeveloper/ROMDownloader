@@ -5,5 +5,6 @@
         public string ArchiveUsername { get; set; }
         public string ArchivePassword { get; set; }
         public List<ROMSource> ROMSources { get; set; }
+        public uint MaxParallelDownloads { get; set; }
     }
 }
