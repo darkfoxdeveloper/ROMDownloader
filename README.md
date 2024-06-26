@@ -1,5 +1,5 @@
 # Rom Downloader
 
-<img width="863" alt="image" src="https://github.com/darkfoxdeveloper/ROMDownloader/assets/46323771/5d77b8db-9e2e-41dd-b57b-b7c913b36b7b">
+<img width="854" alt="image" src="https://github.com/darkfoxdeveloper/ROMDownloader/assets/46323771/6db57806-8ab4-4ce0-8f62-cf9474a98e47">
 
 **Configurable sources with the RomDownloader.json ;)**
