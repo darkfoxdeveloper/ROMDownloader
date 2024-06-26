@@ -61,7 +61,7 @@ class Program
             foreach (ROMSource romSource in config.ROMSources)
             {
                 List<string> links = await GetLinksAsync(romSource);
-                Console.WriteLine($"[{romSource.Type}] Download starting...");
+                _progressBar.WriteLine($"[{romSource.Type}] Download starting...");
 
                 List<Task> tasks = [];
                 _TotalForDownload = links.Count();
