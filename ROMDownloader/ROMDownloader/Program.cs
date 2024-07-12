@@ -2,7 +2,6 @@
 using Newtonsoft.Json;
 using ROMDownloader;
 using ShellProgressBar;
-using System;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
@@ -42,22 +41,27 @@ class Program
         string vName = Assembly.GetExecutingAssembly().GetName().Version.ToString();
         Console.Title = $"RomDownloader v{vName}";
         Console.WriteLine($"ROMDownloader v{vName} starting...");
+        bool CanStart = false;
         if (!File.Exists("RomDownloader.json"))
         {
-            //config.ROMSources.Add(new ROMSource() { Type = "MAME", URI = "https://archive.org/download/mame-merged/mame-merged/", Extension = "zip" });
-            config.ROMSources.Add(new ROMSource() { Type = "GameCube", URI = "https://archive.org/download/rvz-gc-europe-redump/RVZ-GC-EUROPE-REDUMP/", Extension = "rvz" });
-            Console.WriteLine("Do you want a authentificated downloads for archive.org: [Y/N]");
-            string? ConsoleDownloads = Console.ReadLine();
-            if (ConsoleDownloads?.ToUpper() == "Y")
+            //config.ROMSources.Add(new ROMSource() { Type = "NEOGEO", URI = "https://archive.org/compress/NeoGeoRomCollectionByGhostware/formats=ZIP&file=/NeoGeoRomCollectionByGhostware.zip", Extension = "zip", ScrappingType = ScrappingType.DirectLink });
+            //config.ROMSources.Add(new ROMSource() { Type = "MAME", URI = "https://archive.org/download/mame-merged/mame-merged/", Extension = "zip", ScrappingType = ScrappingType.ListOfLinks });
+            config.ROMSources.Add(new ROMSource() { Type = "GameCube", URI = "https://archive.org/download/rvz-gc-europe-redump/RVZ-GC-EUROPE-REDUMP/", Extension = "rvz", ScrappingType = ScrappingType.ListOfLinks });
+            if (config.ROMSources.Any(x => x.URI.Contains("archive.org")))
             {
-                Console.WriteLine("Username for archive.org:");
-                string? Username = Console.ReadLine();
-                Console.WriteLine("Password for archive.org:");
-                string? Password = Console.ReadLine();
-                if (Username != null && Password != null)
+                Console.WriteLine("Do you want a authentificated downloads for archive.org: [Y/N]");
+                string? ConsoleDownloads = Console.ReadLine();
+                if (ConsoleDownloads?.ToUpper() == "Y")
                 {
-                    config.ArchiveUsername = Username;
-                    config.ArchivePassword = Password;
+                    Console.WriteLine("Username for archive.org:");
+                    string? Username = Console.ReadLine();
+                    Console.WriteLine("Password for archive.org:");
+                    string? Password = Console.ReadLine();
+                    if (Username != null && Password != null)
+                    {
+                        config.ArchiveUsername = Username;
+                        config.ArchivePassword = Password;
+                    }
                 }
             }
             File.WriteAllText("RomDownloader.json", JsonConvert.SerializeObject(config));
@@ -69,6 +73,25 @@ class Program
                 config = JsonConvert.DeserializeObject<RomDownloaderConfig>(contentJson);
             }
         }
+        Console.WriteLine($"Scrapping roms in links...");
+        foreach (ROMSource romSource in config.ROMSources)
+        {
+            List<string> links = await GetLinksAsync(romSource);
+            if (romSource.ScrappingType == ScrappingType.DirectLink)
+            {
+                Console.WriteLine($"Have {links.Count} Pack of ROMS of {romSource.Type} for download");
+            } else
+            {
+                Console.WriteLine($"Have {links.Count} ROMS of {romSource.Type} for download");
+            }
+        }
+        Console.WriteLine("Continue [Y/N]:");
+        string? continueYN = Console.ReadLine();
+        if (continueYN != null && continueYN.ToLower() == "y")
+        {
+            CanStart = true;
+        }
+        if (!CanStart) return;
         if (config.MaxParallelDownloads > 0)
         {
             _MaxDegreeOfParallelism = (int)config?.MaxParallelDownloads;
@@ -144,24 +167,29 @@ class Program
 
     public static async Task<List<string>> GetLinksAsync(ROMSource romSource)
     {
-        List<string> linkList = new List<string>();
+        List<string> linkList = [];
         using (HttpClient client = new())
         {
             try
             {
-                string contenidoHtml = await client.GetStringAsync(romSource.URI);
-                HtmlDocument documento = new();
-                documento.LoadHtml(contenidoHtml);
-                foreach (HtmlNode nodo in documento.DocumentNode.SelectNodes("//a[@href]"))
+                if (romSource.ScrappingType == ScrappingType.DirectLink)
                 {
-                    string href = nodo.GetAttributeValue("href", string.Empty);
-                    if (href.EndsWith("." + romSource.Extension))
+                    linkList.Add(romSource.URI);
+                } else {
+                    string contenidoHtml = await client.GetStringAsync(romSource.URI);
+                    HtmlDocument documento = new();
+                    documento.LoadHtml(contenidoHtml);
+                    foreach (HtmlNode nodo in documento.DocumentNode.SelectNodes("//a[@href]"))
                     {
-                        if (!href.StartsWith("http://") && !href.StartsWith("https://"))
+                        string href = nodo.GetAttributeValue("href", string.Empty);
+                        if (href.EndsWith("." + romSource.Extension))
                         {
-                            href = romSource.URI + href;
+                            if (!href.StartsWith("http://") && !href.StartsWith("https://"))
+                            {
+                                href = romSource.URI + href;
+                            }
+                            linkList.Add(href);
                         }
-                        linkList.Add(href);
                     }
                 }
             }
